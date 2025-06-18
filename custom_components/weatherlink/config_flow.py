@@ -93,7 +93,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="zeroconf_confirm",
             data_schema=vol.Schema(
-                {vol.Optional("title", default=self.discovery_data["title"]): str}
+                {vol.Optional(
+                    "title", default=self.discovery_data["title"]): str}
             ),
         )
 
@@ -105,7 +106,7 @@ class OptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         super().__init__()
-        self.config_entry = config_entry
+        #self.config_entry = config_entry
         self.options = dict(config_entry.options)
 
     async def async_step_init(self, user_input=None):
@@ -152,7 +153,8 @@ class OptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="units",
-            data_schema=get_unit_config(self.hass, self.config_entry).units_schema(),
+            data_schema=get_unit_config(
+                self.hass, self.config_entry).units_schema(),
         )
 
     async def async_step_rounding(self, user_input=None):
@@ -163,7 +165,8 @@ class OptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="rounding",
-            data_schema=get_unit_config(self.hass, self.config_entry).rounding_schema(),
+            data_schema=get_unit_config(
+                self.hass, self.config_entry).rounding_schema(),
         )
 
     async def finish(self):
