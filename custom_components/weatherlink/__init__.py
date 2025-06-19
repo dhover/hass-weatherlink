@@ -5,6 +5,7 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -46,7 +47,7 @@ class WeatherLinkCoordinator(DataUpdateCoordinator[CurrentConditions]):
     device_name: str
     device_model_name: str
 
-    __broadcast_task: asyncio.Task | None = None
+    __broadcast_task: asyncio.Task[None] | None = None
 
     def __set_broadcast_task_state(self, on: bool) -> None:
         if self.__broadcast_task:
@@ -104,32 +105,46 @@ class WeatherLinkCoordinator(DataUpdateCoordinator[CurrentConditions]):
 
         return conditions
 
-    async def __broadcast_loop_once(self, broadcast: WeatherLinkBroadcast) -> None:
-        logger.debug("received broadcast conditions")
-        conditions = await broadcast.read()
-        self.data.update_from(conditions)
-
-        # TODO theoretically this only needs to update sensors which actually make use of the live data
-        # notify all listeners without resetting the polling interval
-        self.async_update_listeners()
-
     async def __broadcast_loop(self) -> None:
-        try:
-            broadcast = await WeatherLinkBroadcast.start(self.session)
-        except Exception:
-            logger.exception("failed to start broadcast")
-            return
+        broadcast: WeatherLinkBroadcast | None = None
         try:
             while True:
+                if broadcast is None:
+                    try:
+                        broadcast = await WeatherLinkBroadcast.start(self.session)
+                    except Exception:
+                        logger.exception("failed to start broadcast")
+                        await asyncio.sleep(FAIL_TIMEOUT)
+                        continue
+
                 try:
-                    await self.__broadcast_loop_once(broadcast)
+                    conditions = await broadcast.read()
+                    if logger.isEnabledFor(logging.DEBUG):
+                        condition_types = {
+                            cond.__class__.__name__ for cond in conditions.conditions
+                        }
+                        logger.debug(
+                            "received broadcast conditions from %s (%s): %s",
+                            conditions.did,
+                            conditions.ts,
+                            condition_types,
+                        )
+                    self.data.update_from(conditions)
+
+                    # TODO theoretically this only needs to update sensors which actually make use of the live data
+                    # notify all listeners without resetting the polling interval
+                    self.async_update_listeners()
                 except Exception:
                     logger.exception("failed to read broadcast")
+                    await asyncio.sleep(FAIL_TIMEOUT)
         finally:
-            await broadcast.stop()
+            if broadcast:
+                await broadcast.stop()
 
     @classmethod
-    async def build(cls, hass, session: WeatherLinkRest, entry: ConfigEntry):
+    async def build(
+        cls, hass: HomeAssistant, session: WeatherLinkRest, entry: ConfigEntry
+    ):
         coordinator = cls(
             hass,
             logger,
@@ -156,7 +171,7 @@ async def setup_coordinator(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
 
-async def async_setup_entry(hass, entry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await setup_coordinator(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -164,7 +179,7 @@ async def async_setup_entry(hass, entry):
     return True
 
 
-async def async_unload_entry(hass, entry):
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for platform in PLATFORMS:
         await hass.config_entries.async_forward_entry_unload(entry, platform)
 
@@ -189,7 +204,7 @@ class WeatherLinkEntity(CoordinatorEntity):
         return self.coordinator.units
 
     @property
-    def device_info(self):
+    def device_info(self) -> dr.DeviceInfo:
         coord = self.coordinator
         return {
             "identifiers": {(DOMAIN, coord.device_did)},
@@ -200,5 +215,5 @@ class WeatherLinkEntity(CoordinatorEntity):
         }
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         return f"{DOMAIN}-{self.coordinator.device_did}-{type(self).__qualname__}"
